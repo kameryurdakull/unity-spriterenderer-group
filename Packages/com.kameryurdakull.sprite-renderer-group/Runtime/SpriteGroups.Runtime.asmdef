@@ -1,4 +1,5 @@
 {
   "name": "SpriteGroups.Runtime",
-  "rootNamespace": "SpriteGroups"
+  "rootNamespace": "SpriteGroups",
+  "references": ["Unity.TextMeshPro"]
 }

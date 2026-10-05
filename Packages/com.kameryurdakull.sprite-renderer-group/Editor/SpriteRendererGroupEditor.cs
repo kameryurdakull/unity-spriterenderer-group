@@ -34,11 +34,12 @@ namespace SpriteGroups.Editor
                 {
                     EditorGUILayout.FloatField("Effective Alpha", group.EffectiveAlpha);
                     EditorGUILayout.IntField("Owned Sprites", group.RendererCount);
+                    EditorGUILayout.IntField("Owned TMP Texts", group.TextCount);
                 }
             }
 
-            EditorGUILayout.HelpBox("Child sprites keep their original alpha. Nested groups multiply alpha unless Ignore Parent Groups is enabled. Use Refresh after adding sprites to deep children.", MessageType.Info);
-            if (GUILayout.Button("Refresh Sprite Hierarchy")) RefreshTargets();
+            EditorGUILayout.HelpBox("Child sprites and TMP texts keep their original alpha. Nested groups multiply alpha unless Ignore Parent Groups is enabled. Use Refresh after adding targets to deep children.", MessageType.Info);
+            if (GUILayout.Button("Refresh Target Hierarchy")) RefreshTargets();
         }
 
         private void RefreshTargets()

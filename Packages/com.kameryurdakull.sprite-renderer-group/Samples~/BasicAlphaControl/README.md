@@ -12,3 +12,5 @@ Bu örnek UniTask veya DOTween gerektirmez.
 Inspector'daki grup Alpha slider'ı da aynı sonucu verir. Bu örnek Edit Mode'da ve Play Mode'da kullanılabilir; sürekli çalışan bir Update veya coroutine içermez.
 
 İç içe grupları denemek için üçüncü sprite'a `Sprite Renderer Group` ekleyin. Alt grubun Alpha değerini `0.5`, üst grubunkini `0.5` yaparsanız üçüncü sprite'ın sonuç alfası `0.25` olur. Alt grupta **Ignore Parent Groups** işaretlendiğinde sonuç `0.5` olur.
+
+TMP örneği için grubu eklemeden önce child olarak **Text - TextMeshPro** veya Canvas altında **Text - TextMeshPro (UI)** oluşturabilirsiniz. UI metninin Canvas'ı da SpriteGroup'un child'ı olmalıdır. Metnin Color alfa değerini `0.8` ayarlayıp üst grubu ekleyin; **Half Alpha** ile metnin sonuç alfası `0.4`, **Show** ile `0.8` olur. Grubu önceden eklediyseniz metin eklendikten sonra **Refresh Target Hierarchy** kullanın; özgün alfa değişiklikleri için `SetBaseAlpha(text, değer)` çağırın. Gerekirse TMP Essential Resources'ı import edin.

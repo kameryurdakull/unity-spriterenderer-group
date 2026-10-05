@@ -1,6 +1,6 @@
 {
   "name": "SpriteGroups.Tests",
-  "references": ["SpriteGroups.Runtime"],
+  "references": ["SpriteGroups.Runtime", "Unity.TextMeshPro"],
   "includePlatforms": ["Editor"],
   "optionalUnityReferences": ["TestAssemblies"]
 }

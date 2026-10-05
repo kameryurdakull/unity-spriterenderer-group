@@ -1,6 +1,6 @@
 # Sprite Renderer Group
 
-Unity'de CanvasGroup benzeri ortak alfa kontrolünü SpriteRenderer hiyerarşilerine uygular. Sprite'ların özgün alfasını korur, iç içe grupları destekler ve boşta her kare çalışan bir Update/LateUpdate içermez.
+Unity'de CanvasGroup benzeri ortak alfa kontrolünü SpriteRenderer, TextMeshPro ve TextMeshProUGUI hiyerarşilerine uygular. Sprite'ların özgün alfasını korur, iç içe grupları destekler ve boşta her kare çalışan bir Update/LateUpdate içermez.
 
 ## Package Manager ile kurulum
 
@@ -11,10 +11,10 @@ Unity'de CanvasGroup benzeri ortak alfa kontrolünü SpriteRenderer hiyerarşile
 3. Aşağıdaki URL'yi yapıştırın:
 
 ```text
-https://github.com/kameryurdakull/unity-spriterenderer-group.git?path=/Packages/com.kameryurdakull.sprite-renderer-group#v1.0.0
+https://github.com/kameryurdakull/unity-spriterenderer-group.git?path=/Packages/com.kameryurdakull.sprite-renderer-group#v1.1.0
 ```
 
-Bu URL sabit **1.0.0** sürümünü kurar. Ana daldaki son değişiklikleri almak için:
+Bu URL sabit **1.1.0** sürümünü kurar. Ana daldaki son değişiklikleri almak için:
 
 ```text
 https://github.com/kameryurdakull/unity-spriterenderer-group.git?path=/Packages/com.kameryurdakull.sprite-renderer-group#main
@@ -22,7 +22,7 @@ https://github.com/kameryurdakull/unity-spriterenderer-group.git?path=/Packages/
 
 Paket kimliği: `com.kameryurdakull.sprite-renderer-group`.
 
-Temel grup ve Inspector için ek paket gerekmez. DOTween, UniTask, VContainer ve Event Bus temel kurulumun bağımlılığı değildir. Eski `Assets/SpriteGroups` kopyasını kullanıyorsanız UPM kurulumundan önce kaldırın; aynı assembly'nin iki kopyası birlikte bulunmamalıdır.
+TMP desteği için Unity 6’nın `com.unity.ugui` (2.0.0+) paketi otomatik kurulur; bu paket `Unity.TextMeshPro` assembly’sini içerir. DOTween, UniTask, VContainer ve Event Bus temel kurulumun bağımlılığı değildir. Eski `Assets/SpriteGroups` kopyasını kullanıyorsanız UPM kurulumundan önce kaldırın; aynı assembly'nin iki kopyası birlikte bulunmamalıdır.
 
 ## İlk kullanım: üç sprite'ı birlikte soldurmak
 
@@ -86,13 +86,33 @@ public sealed class CharacterVisibility : MonoBehaviour
 | `Alpha` | Yerel alfa; sonlu değerleri 0–1 aralığına sınırlar. |
 | `EffectiveAlpha` | Üst gruplarla çarpılmış etkin alfa. |
 | `IgnoreParentGroups` | Üst gruplardan alfa mirasını keser. |
-| `SetBaseAlpha(renderer, alpha)` | Grubun sahibi olduğu hedef sprite'ın özgün alfasını değiştirir; sahip değilse false döner. |
+| `SetBaseAlpha(target, alpha)` | Grubun sahibi olduğu SpriteRenderer veya TMP_Text hedefinin özgün alfasını değiştirir; sahip değilse false döner. |
 | `Refresh()` | İlgili aktif kök grubun hiyerarşisini ve sahipliği yeniler. |
 | `ApplySettings()` | Harici Editor aracının değiştirdiği serialized ayarları hiyerarşi taramadan uygular. |
-| `RendererCount` | Grubun doğrudan sahip olduğu sprite sayısı; alt grupların sprite'larını içermez. |
+| `RendererCount` | Grubun doğrudan sahip olduğu SpriteRenderer sayısı. |
+| `TextCount` | Grubun doğrudan sahip olduğu TMP_Text sayısı. |
+| `TargetCount` | Grubun toplam sprite + TMP hedefi sayısı; alt gruplar dahil değildir. |
 | `AlphaChanged` | Runtime Alpha setter'ındaki yerel değişimleri bildirir. |
 
 Runtime API'yi Unity ana thread'inde çağırın. `AlphaChanged`, üst grup/Inspector/Animator değişimlerinde tetiklenmez; gerekiyorsa mevcut Event Bus'a adapter ile bağlayın.
+
+## TextMeshPro desteği
+
+Child nesnelerdeki **TextMeshPro (3D)** ve **TextMeshProUGUI (UI)** otomatik dahil edilir. Üst nesnedeki TMP component’i ve inactive child’lar da desteklenir. Canvas altındaki TextMeshProUGUI için aynı group nesnesi Canvas’ın üstünde veya atası olabilir; metnin gerçekten bu Transform hiyerarşisinde bulunması gerekir.
+
+```csharp
+using TMPro;
+
+// Label’ın özgün alfası 0.8 ise sonuç 0.4 olur.
+group.Alpha = 0.5f;
+
+// Sprite overload’ına ek olarak Component hedefleri de desteklenir.
+group.SetBaseAlpha(label, 0.6f); // label: TMP_Text, sonuç alfa: 0.3
+```
+
+Metnin özgün Color/alpha değerini grup eklenmeden önce ayarlayın. Daha sonraki değişikliklerde `SetBaseAlpha(text, değer)` kullanın. Metnin RGB’si, font materyali ve per-character renk/animasyon verileri doğrudan değiştirilmez; TMP’nin `alpha` özelliği üzerinden ortak alfa uygulanır. Mevcut CanvasGroup ve materyal alfaları render sonucunu ayrıca etkileyebilir.
+
+Yeni TMP component’i ekledikten veya derin child hiyerarşisini değiştirdikten sonra **Refresh Target Hierarchy** düğmesine basın ya da `group.Refresh()` çağırın. Fontlar için gerekirse **Window > TextMeshPro > Import TMP Essential Resources** işlemini yapın.
 
 ## İç içe gruplar
 
@@ -158,16 +178,16 @@ Kendi asmdef'inizde temel API için `SpriteGroups.Runtime`, fade için ayrıca `
 ## Hiyerarşi değişiklikleri ve sınırlar
 
 - Doğrudan grup çocuklarındaki Transform değişiklikleri ve grup enable/disable olayları otomatik işlenir.
-- Derin çocuk ekleme/silme, yeniden parent etme veya SpriteRenderer component ekleme/silme sonrasında `Refresh()` çağırın. Inactive kök için etkinleştirme sırasında sahiplik otomatik kurulur.
-- Grup sprite alfasının sahibidir. Başka bir sistemle doğrudan `SpriteRenderer.color.a` yazmayın; `SetBaseAlpha` kullanın. RGB değiştirirken mevcut alfa değerini koruyun.
+- Derin çocuk ekleme/silme, yeniden parent etme veya SpriteRenderer/TMP_Text component ekleme/silme sonrasında `Refresh()` çağırın. Inactive kök için etkinleştirme sırasında sahiplik otomatik kurulur.
+- Grup sprite ve TMP hedeflerinin alfasının sahibidir. Başka bir sistemle doğrudan `SpriteRenderer.color.a`, `TMP_Text.color.a` veya `TMP_Text.alpha` yazmayın; `SetBaseAlpha` kullanın. RGB değiştirirken mevcut alfa değerini koruyun.
 - Shader'ın SpriteRenderer renginin alfasını kullanması gerekir.
 - CanvasGroup'un UI interactable/raycast özellikleri bu paketin kapsamına girmez.
 
 ## Performans
 
-Boşta `Update`/`LateUpdate` veya sürekli kontrol yoktur. Alfa değişimi sadece etkilenen dalı günceller; etkin alfa değişmiyorsa dal atlanır. `SetBaseAlpha` sadece hedef sprite'ı günceller. `Refresh` bağımsız kökleri taramaz; value-type sprite kayıtlarını ve ısınmış koleksiyonları yeniden kullanır.
+Boşta `Update`/`LateUpdate` veya sürekli kontrol yoktur. Alfa değişimi sadece etkilenen dalı günceller; etkin alfa değişmiyorsa dal atlanır. `SetBaseAlpha` sadece belirtilen sprite/TMP hedefini günceller. `Refresh` bağımsız kökleri taramaz; value-type sprite kayıtlarını ve ısınmış koleksiyonları yeniden kullanır.
 
-Testlerde 1.000 alfa + temel alfa güncellemesi ve 100 aynı-hiyerarşi yenilemesi ayrı ayrı **0 byte managed allocation** ile doğrulandı. Ölçüm `GC.GetAllocatedBytesForCurrentThread()` ile ısınma sonrası yapılır. Yeni kapasite büyümesi, event aboneleri, native bellek ve tween oluşturma bu ölçüme dahil değildir; FPS benchmark'ı değildir. Async fade başlatma completion/cancellation callback'leri nedeniyle allocation yapabilir.
+Testlerde 1.000 alfa + temel alfa güncellemesi ve 100 aynı-hiyerarşi yenilemesi ayrı ayrı **0 byte managed allocation** ile doğrulandı. Ölçüm `GC.GetAllocatedBytesForCurrentThread()` ile ısınma sonrası yapılır. Yeni kapasite büyümesi, event aboneleri, native bellek ve tween oluşturma bu ölçüme dahil değildir; FPS benchmark'ı değildir. Async fade başlatma completion/cancellation callback'leri nedeniyle allocation yapabilir. TMP alfa değişikliği metnin mesh/Canvas güncellemesini dirty olarak işaretler; TMP’nin sonraki render/layout işlemlerinin maliyeti grup allocation ölçümüne dahil değildir.
 
 ## Paket testleri ve geliştirme
 

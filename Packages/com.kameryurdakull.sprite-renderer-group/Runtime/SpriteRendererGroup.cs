@@ -1,18 +1,20 @@
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace SpriteGroups
 {
-    /// <summary>Event-driven alpha inheritance. The group exclusively owns its sprites' alpha.</summary>
+    /// <summary>Event-driven alpha inheritance for SpriteRenderer and TMP_Text targets.</summary>
     [ExecuteAlways, DisallowMultipleComponent]
     [AddComponentMenu("Rendering/Sprite Renderer Group")]
     public sealed class SpriteRendererGroup : MonoBehaviour
     {
         [Serializable]
-        private struct SpriteBinding
+        private struct AlphaBinding
         {
-            public SpriteRenderer Renderer;
+            [FormerlySerializedAs("Renderer")] public Component Target;
             public float BaseAlpha;
             [NonSerialized] public uint Revision;
         }
@@ -31,16 +33,16 @@ namespace SpriteGroups
 
         // Structural callbacks may reach the new owner first. Transfer the original baseline
         // through this lookup instead of capturing another group's multiplied color.
-        private static readonly Dictionary<SpriteRenderer, Ownership> Owners = new();
+        private static readonly Dictionary<Component, Ownership> Owners = new();
         private static readonly List<SpriteRendererGroup> RefreshBuffer = new();
-        private static readonly List<SpriteRenderer> ComponentBuffer = new();
+        private static readonly List<Component> ComponentBuffer = new();
         private static uint refreshRevision;
         private static bool refreshing;
 
         [SerializeField, Range(0f, 1f)] private float alpha = 1f;
         [SerializeField] private bool ignoreParentGroups;
         // Serialized baselines preserve Editor previews across saving, duplication and domain reloads.
-        [SerializeField, HideInInspector] private List<SpriteBinding> bindings = new();
+        [SerializeField, HideInInspector] private List<AlphaBinding> bindings = new();
         private readonly List<SpriteRendererGroup> childGroups = new();
         private SpriteRendererGroup parentGroup;
         private float effectiveAlpha = 1f;
@@ -75,7 +77,9 @@ namespace SpriteGroups
         }
 
         public float EffectiveAlpha => isActiveAndEnabled ? effectiveAlpha : 1f;
-        public int RendererCount => bindings.Count;
+        public int RendererCount => CountTargets<SpriteRenderer>();
+        public int TextCount => CountTargets<TMP_Text>();
+        public int TargetCount => bindings.Count;
 
         /// <summary>Applies serialized settings without scanning the Transform hierarchy.</summary>
         public void ApplySettings()
@@ -99,15 +103,19 @@ namespace SpriteGroups
 
         /// <summary>Updates only the specified sprite. Returns false when it belongs to another group.</summary>
         public bool SetBaseAlpha(SpriteRenderer renderer, float value)
+            => SetBaseAlpha((Component)renderer, value);
+
+        /// <summary>Updates a supported sprite or TMP target without visiting any other target.</summary>
+        public bool SetBaseAlpha(Component target, float value)
         {
             var next = ClampAlpha(value);
-            if (renderer == null || !Owners.TryGetValue(renderer, out var ownership) || ownership.Group != this)
+            if (target == null || !Owners.TryGetValue(target, out var ownership) || ownership.Group != this)
                 return false;
             var binding = bindings[ownership.Index];
             if (binding.BaseAlpha == next) return true;
             binding.BaseAlpha = next;
             bindings[ownership.Index] = binding;
-            SetSpriteAlpha(renderer, next * effectiveAlpha);
+            SetTargetAlpha(target, next * effectiveAlpha);
             return true;
         }
 
@@ -160,18 +168,18 @@ namespace SpriteGroups
             for (var index = bindings.Count - 1; index >= 0; index--)
             {
                 var binding = bindings[index];
-                if (binding.Renderer == null)
+                if (binding.Target == null)
                 {
                     RemoveBinding(index, false);
                     continue;
                 }
-                if (Owners.TryGetValue(binding.Renderer, out var previous) && previous.Group != this)
+                if (Owners.TryGetValue(binding.Target, out var previous) && previous.Group != this)
                 {
                     binding.BaseAlpha = previous.Group.bindings[previous.Index].BaseAlpha;
                     previous.Group.RemoveBinding(previous.Index, false);
                     bindings[index] = binding;
                 }
-                Owners[binding.Renderer] = new Ownership(this, index);
+                Owners[binding.Target] = new Ownership(this, index);
             }
         }
 
@@ -232,16 +240,19 @@ namespace SpriteGroups
             }
             node.GetComponents(ComponentBuffer);
             for (var index = 0; index < ComponentBuffer.Count; index++)
-                owner.Collect(ComponentBuffer[index]);
+            {
+                var target = ComponentBuffer[index];
+                if (target is SpriteRenderer || target is TMP_Text) owner.Collect(target);
+            }
             ComponentBuffer.Clear();
             for (var index = 0; index < node.childCount; index++)
                 Traverse(node.GetChild(index), owner);
         }
 
-        private void Collect(SpriteRenderer renderer)
+        private void Collect(Component target)
         {
-            var binding = default(SpriteBinding);
-            if (Owners.TryGetValue(renderer, out var previous))
+            var binding = default(AlphaBinding);
+            if (Owners.TryGetValue(target, out var previous))
             {
                 binding = previous.Group.bindings[previous.Index];
                 binding.Revision = refreshRevision;
@@ -254,9 +265,9 @@ namespace SpriteGroups
             }
             else
             {
-                binding = new SpriteBinding { Renderer = renderer, BaseAlpha = renderer.color.a, Revision = refreshRevision };
+                binding = new AlphaBinding { Target = target, BaseAlpha = ReadTargetAlpha(target), Revision = refreshRevision };
             }
-            Owners[renderer] = new Ownership(this, bindings.Count);
+            Owners[target] = new Ownership(this, bindings.Count);
             bindings.Add(binding);
         }
 
@@ -276,7 +287,7 @@ namespace SpriteGroups
             for (var index = 0; index < bindings.Count; index++)
             {
                 var binding = bindings[index];
-                if (binding.Renderer != null) SetSpriteAlpha(binding.Renderer, binding.BaseAlpha * next);
+                if (binding.Target != null) SetTargetAlpha(binding.Target, binding.BaseAlpha * next);
             }
             for (var index = 0; index < childGroups.Count; index++)
             {
@@ -294,24 +305,47 @@ namespace SpriteGroups
         private void RemoveBinding(int index, bool restore)
         {
             var binding = bindings[index];
-            if (restore && binding.Renderer != null) SetSpriteAlpha(binding.Renderer, binding.BaseAlpha);
-            if (!ReferenceEquals(binding.Renderer, null)) Owners.Remove(binding.Renderer);
+            if (restore && binding.Target != null) SetTargetAlpha(binding.Target, binding.BaseAlpha);
+            if (!ReferenceEquals(binding.Target, null)) Owners.Remove(binding.Target);
             var lastIndex = bindings.Count - 1;
             if (index != lastIndex)
             {
                 var moved = bindings[lastIndex];
                 bindings[index] = moved;
-                if (!ReferenceEquals(moved.Renderer, null)) Owners[moved.Renderer] = new Ownership(this, index);
+                if (!ReferenceEquals(moved.Target, null)) Owners[moved.Target] = new Ownership(this, index);
             }
             bindings.RemoveAt(lastIndex);
         }
 
-        private static void SetSpriteAlpha(SpriteRenderer renderer, float value)
+        private int CountTargets<T>() where T : Component
         {
-            var color = renderer.color;
-            if (color.a == value) return;
-            color.a = value;
-            renderer.color = color;
+            var count = 0;
+            for (var index = 0; index < bindings.Count; index++)
+            {
+                if (bindings[index].Target is T) count++;
+            }
+            return count;
+        }
+
+        private static float ReadTargetAlpha(Component target)
+        {
+            if (target is SpriteRenderer renderer) return renderer.color.a;
+            return ((TMP_Text)target).alpha;
+        }
+
+        private static void SetTargetAlpha(Component target, float value)
+        {
+            if (target is SpriteRenderer renderer)
+            {
+                var color = renderer.color;
+                if (color.a == value) return;
+                color.a = value;
+                renderer.color = color;
+            }
+            else if (target is TMP_Text text && text.alpha != value)
+            {
+                text.alpha = value;
+            }
         }
 
         private static float ClampAlpha(float value)
