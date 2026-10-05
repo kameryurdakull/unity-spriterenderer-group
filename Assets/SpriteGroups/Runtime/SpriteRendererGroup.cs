@@ -4,33 +4,49 @@ using UnityEngine;
 
 namespace SpriteGroups
 {
-    /// <summary>Multiplies the original alpha of owned sprites by this group and its parent groups.</summary>
-    [ExecuteAlways]
-    [DisallowMultipleComponent]
+    /// <summary>Event-driven alpha inheritance. The group exclusively owns its sprites' alpha.</summary>
+    [ExecuteAlways, DisallowMultipleComponent]
     [AddComponentMenu("Rendering/Sprite Renderer Group")]
     public sealed class SpriteRendererGroup : MonoBehaviour
     {
         [Serializable]
-        private sealed class SpriteBinding
+        private struct SpriteBinding
         {
             public SpriteRenderer Renderer;
             public float BaseAlpha;
+            [NonSerialized] public uint Revision;
+        }
 
-            public SpriteBinding(SpriteRenderer renderer)
+        private readonly struct Ownership
+        {
+            public readonly SpriteRendererGroup Group;
+            public readonly int Index;
+
+            public Ownership(SpriteRendererGroup group, int index)
             {
-                Renderer = renderer;
-                BaseAlpha = renderer.color.a;
+                Group = group;
+                Index = index;
             }
         }
 
-        private static readonly List<SpriteRendererGroup> ActiveGroups = new();
-        private static bool hierarchyDirty;
+        // Structural callbacks may reach the new owner first. Transfer the original baseline
+        // through this lookup instead of capturing another group's multiplied color.
+        private static readonly Dictionary<SpriteRenderer, Ownership> Owners = new();
+        private static readonly List<SpriteRendererGroup> RefreshBuffer = new();
+        private static readonly List<SpriteRenderer> ComponentBuffer = new();
+        private static uint refreshRevision;
+        private static bool refreshing;
 
         [SerializeField, Range(0f, 1f)] private float alpha = 1f;
         [SerializeField] private bool ignoreParentGroups;
-        // Serialized baselines survive assembly reloads and saved Editor previews, including alpha zero.
+        // Serialized baselines preserve Editor previews across saving, duplication and domain reloads.
         [SerializeField, HideInInspector] private List<SpriteBinding> bindings = new();
-        private readonly List<SpriteRenderer> spriteBuffer = new();
+        private readonly List<SpriteRendererGroup> childGroups = new();
+        private SpriteRendererGroup parentGroup;
+        private float effectiveAlpha = 1f;
+        private uint visitedRevision;
+        private uint bufferedRevision;
+        private bool initialized;
 
         public event Action<float> AlphaChanged;
 
@@ -42,7 +58,7 @@ namespace SpriteGroups
                 var next = ClampAlpha(value);
                 if (alpha == next) return;
                 alpha = next;
-                ApplyAll();
+                ApplySettings();
                 AlphaChanged?.Invoke(alpha);
             }
         }
@@ -54,148 +70,240 @@ namespace SpriteGroups
             {
                 if (ignoreParentGroups == value) return;
                 ignoreParentGroups = value;
-                ApplyAll();
+                ApplySettings();
             }
         }
 
-        public float EffectiveAlpha
-        {
-            get
-            {
-                if (!isActiveAndEnabled) return 1f;
-                var result = alpha;
-                if (ignoreParentGroups) return result;
-                for (var parent = transform.parent; parent != null; parent = parent.parent)
-                {
-                    if (!parent.TryGetComponent<SpriteRendererGroup>(out var group) || !group.isActiveAndEnabled)
-                        continue;
-                    result *= group.alpha;
-                    if (group.ignoreParentGroups) break;
-                }
-                return result;
-            }
-        }
-
+        public float EffectiveAlpha => isActiveAndEnabled ? effectiveAlpha : 1f;
         public int RendererCount => bindings.Count;
 
-        /// <summary>Rebuilds ownership after adding/removing sprites or changing a deep child hierarchy.</summary>
-        public void Refresh()
+        /// <summary>Applies serialized settings without scanning the Transform hierarchy.</summary>
+        public void ApplySettings()
         {
-            hierarchyDirty = true;
-            ApplyAll();
+            if (initialized && isActiveAndEnabled)
+                ApplyBranch(parentGroup != null ? parentGroup.effectiveAlpha : 1f, false);
         }
 
-        /// <summary>Changes a sprite's unmultiplied alpha. Returns false if another group owns the sprite.</summary>
+        /// <summary>Refreshes this hierarchy root after structural changes, reusing warmed buffers.</summary>
+        public void Refresh()
+        {
+            if (!isActiveAndEnabled || refreshing) return;
+            var root = this;
+            for (var current = transform.parent; current != null; current = current.parent)
+            {
+                if (current.TryGetComponent<SpriteRendererGroup>(out var ancestor) && ancestor.isActiveAndEnabled)
+                    root = ancestor;
+            }
+            root.RefreshRoot();
+        }
+
+        /// <summary>Updates only the specified sprite. Returns false when it belongs to another group.</summary>
         public bool SetBaseAlpha(SpriteRenderer renderer, float value)
         {
             var next = ClampAlpha(value);
-            if (hierarchyDirty) RebuildAll();
-            for (var index = 0; index < bindings.Count; index++)
-            {
-                var binding = bindings[index];
-                if (binding.Renderer != renderer || renderer == null) continue;
-                binding.BaseAlpha = next;
-                Apply();
-                return true;
-            }
-            return false;
+            if (renderer == null || !Owners.TryGetValue(renderer, out var ownership) || ownership.Group != this)
+                return false;
+            var binding = bindings[ownership.Index];
+            if (binding.BaseAlpha == next) return true;
+            binding.BaseAlpha = next;
+            bindings[ownership.Index] = binding;
+            SetSpriteAlpha(renderer, next * effectiveAlpha);
+            return true;
         }
 
         private void OnEnable()
         {
-            Restore();
-            bindings.Clear();
-            if (!ActiveGroups.Contains(this)) ActiveGroups.Add(this);
-            hierarchyDirty = true;
-            ApplyAll();
+            Initialize();
+            Refresh();
         }
 
         private void OnDisable()
         {
-            Restore();
-            bindings.Clear();
-            ActiveGroups.Remove(this);
-            hierarchyDirty = true;
-            ApplyAll();
-        }
-
-        private void OnValidate()
-        {
-            alpha = float.IsNaN(alpha) ? 1f : Mathf.Clamp01(alpha);
-            hierarchyDirty = true;
-        }
-
-        private void OnTransformParentChanged() => hierarchyDirty = true;
-        private void OnTransformChildrenChanged() => hierarchyDirty = true;
-        private void OnDidApplyAnimationProperties() => ApplyAll();
-
-        private void LateUpdate()
-        {
-            if (hierarchyDirty) RebuildAll();
-            Apply();
-        }
-
-        private static void ApplyAll()
-        {
-            if (hierarchyDirty) RebuildAll();
-            for (var index = 0; index < ActiveGroups.Count; index++)
-                ActiveGroups[index].Apply();
-        }
-
-        private static void RebuildAll()
-        {
-            hierarchyDirty = false;
-            // Restore every previous owner before any new owner captures its baseline.
-            for (var index = 0; index < ActiveGroups.Count; index++)
+            initialized = false;
+            var previousParent = parentGroup;
+            SetParent(null);
+            ReleaseBindings();
+            if (previousParent != null && previousParent.isActiveAndEnabled)
             {
-                ActiveGroups[index].Restore();
-                ActiveGroups[index].bindings.Clear();
+                previousParent.Refresh();
+                return;
             }
-            for (var index = 0; index < ActiveGroups.Count; index++)
-                ActiveGroups[index].Collect();
-        }
-
-        private void Collect()
-        {
-            spriteBuffer.Clear();
-            GetComponentsInChildren(true, spriteBuffer);
-            for (var index = 0; index < spriteBuffer.Count; index++)
+            for (var index = childGroups.Count - 1; index >= 0; index--)
             {
-                var renderer = spriteBuffer[index];
-                if (FindOwner(renderer.transform) == this)
-                    bindings.Add(new SpriteBinding(renderer));
+                var child = childGroups[index];
+                child.SetParent(null);
+                if (child.isActiveAndEnabled) child.Refresh();
             }
-            spriteBuffer.Clear();
         }
 
-        private static SpriteRendererGroup FindOwner(Transform target)
+        private void OnValidate() => alpha = float.IsNaN(alpha) ? 1f : Mathf.Clamp01(alpha);
+
+        private void OnTransformParentChanged()
         {
-            for (var current = target; current != null; current = current.parent)
+            if (!initialized || !isActiveAndEnabled) return;
+            var previousParent = parentGroup;
+            if (previousParent != null && previousParent.isActiveAndEnabled) previousParent.Refresh();
+            Refresh();
+        }
+
+        private void OnTransformChildrenChanged()
+        {
+            if (initialized && isActiveAndEnabled) Refresh();
+        }
+
+        private void OnDidApplyAnimationProperties() => ApplySettings();
+
+        private void Initialize()
+        {
+            if (initialized) return;
+            initialized = true;
+            for (var index = bindings.Count - 1; index >= 0; index--)
             {
-                if (current.TryGetComponent<SpriteRendererGroup>(out var group) && group.isActiveAndEnabled)
-                    return group;
+                var binding = bindings[index];
+                if (binding.Renderer == null)
+                {
+                    RemoveBinding(index, false);
+                    continue;
+                }
+                if (Owners.TryGetValue(binding.Renderer, out var previous) && previous.Group != this)
+                {
+                    binding.BaseAlpha = previous.Group.bindings[previous.Index].BaseAlpha;
+                    previous.Group.RemoveBinding(previous.Index, false);
+                    bindings[index] = binding;
+                }
+                Owners[binding.Renderer] = new Ownership(this, index);
             }
-            return null;
         }
 
-        private void Apply()
+        private void RefreshRoot()
         {
-            var multiplier = EffectiveAlpha;
+            refreshing = true;
+            unchecked { refreshRevision++; }
+            try
+            {
+                GatherPreviousGroups(this);
+                Traverse(transform, null);
+                for (var index = 0; index < RefreshBuffer.Count; index++)
+                {
+                    var group = RefreshBuffer[index];
+                    if (group.visitedRevision != refreshRevision)
+                    {
+                        group.ReleaseBindings();
+                        group.SetParent(null);
+                        continue;
+                    }
+                    for (var bindingIndex = group.bindings.Count - 1; bindingIndex >= 0; bindingIndex--)
+                    {
+                        if (group.bindings[bindingIndex].Revision != refreshRevision)
+                            group.RemoveBinding(bindingIndex, true);
+                    }
+                }
+                ApplyBranch(1f, true);
+            }
+            finally
+            {
+                RefreshBuffer.Clear();
+                ComponentBuffer.Clear();
+                refreshing = false;
+            }
+        }
+
+        private static void GatherPreviousGroups(SpriteRendererGroup group)
+        {
+            group.bufferedRevision = refreshRevision;
+            RefreshBuffer.Add(group);
+            for (var index = 0; index < group.childGroups.Count; index++)
+                GatherPreviousGroups(group.childGroups[index]);
+        }
+
+        private static void Traverse(Transform node, SpriteRendererGroup owner)
+        {
+            if (node.TryGetComponent<SpriteRendererGroup>(out var group) && group.isActiveAndEnabled)
+            {
+                group.Initialize();
+                group.SetParent(owner);
+                group.visitedRevision = refreshRevision;
+                if (group.bufferedRevision != refreshRevision)
+                {
+                    group.bufferedRevision = refreshRevision;
+                    RefreshBuffer.Add(group);
+                }
+                owner = group;
+            }
+            node.GetComponents(ComponentBuffer);
+            for (var index = 0; index < ComponentBuffer.Count; index++)
+                owner.Collect(ComponentBuffer[index]);
+            ComponentBuffer.Clear();
+            for (var index = 0; index < node.childCount; index++)
+                Traverse(node.GetChild(index), owner);
+        }
+
+        private void Collect(SpriteRenderer renderer)
+        {
+            var binding = default(SpriteBinding);
+            if (Owners.TryGetValue(renderer, out var previous))
+            {
+                binding = previous.Group.bindings[previous.Index];
+                binding.Revision = refreshRevision;
+                if (previous.Group == this)
+                {
+                    bindings[previous.Index] = binding;
+                    return;
+                }
+                previous.Group.RemoveBinding(previous.Index, false);
+            }
+            else
+            {
+                binding = new SpriteBinding { Renderer = renderer, BaseAlpha = renderer.color.a, Revision = refreshRevision };
+            }
+            Owners[renderer] = new Ownership(this, bindings.Count);
+            bindings.Add(binding);
+        }
+
+        private void SetParent(SpriteRendererGroup next)
+        {
+            if (parentGroup == next) return;
+            if (parentGroup != null) parentGroup.childGroups.Remove(this);
+            parentGroup = next;
+            if (next != null) next.childGroups.Add(this);
+        }
+
+        private void ApplyBranch(float inheritedAlpha, bool force)
+        {
+            var next = ignoreParentGroups ? alpha : alpha * inheritedAlpha;
+            if (!force && effectiveAlpha == next) return;
+            effectiveAlpha = next;
             for (var index = 0; index < bindings.Count; index++)
             {
                 var binding = bindings[index];
-                if (binding.Renderer == null) continue;
-                SetSpriteAlpha(binding.Renderer, binding.BaseAlpha * multiplier);
+                if (binding.Renderer != null) SetSpriteAlpha(binding.Renderer, binding.BaseAlpha * next);
+            }
+            for (var index = 0; index < childGroups.Count; index++)
+            {
+                var child = childGroups[index];
+                if (force || !child.ignoreParentGroups) child.ApplyBranch(next, force);
             }
         }
 
-        private void Restore()
+        private void ReleaseBindings()
         {
-            for (var index = 0; index < bindings.Count; index++)
+            for (var index = bindings.Count - 1; index >= 0; index--)
+                RemoveBinding(index, true);
+        }
+
+        private void RemoveBinding(int index, bool restore)
+        {
+            var binding = bindings[index];
+            if (restore && binding.Renderer != null) SetSpriteAlpha(binding.Renderer, binding.BaseAlpha);
+            if (!ReferenceEquals(binding.Renderer, null)) Owners.Remove(binding.Renderer);
+            var lastIndex = bindings.Count - 1;
+            if (index != lastIndex)
             {
-                var binding = bindings[index];
-                if (binding.Renderer != null) SetSpriteAlpha(binding.Renderer, binding.BaseAlpha);
+                var moved = bindings[lastIndex];
+                bindings[index] = moved;
+                if (!ReferenceEquals(moved.Renderer, null)) Owners[moved.Renderer] = new Ownership(this, index);
             }
+            bindings.RemoveAt(lastIndex);
         }
 
         private static void SetSpriteAlpha(SpriteRenderer renderer, float value)

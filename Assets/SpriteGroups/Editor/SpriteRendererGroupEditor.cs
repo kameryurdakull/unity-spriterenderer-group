@@ -15,14 +15,17 @@ namespace SpriteGroups.Editor
         {
             alpha = serializedObject.FindProperty(AlphaProperty);
             ignoreParents = serializedObject.FindProperty(IgnoreParentsProperty);
+            Undo.undoRedoPerformed += ApplyTargets;
         }
+
+        private void OnDisable() => Undo.undoRedoPerformed -= ApplyTargets;
 
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
             EditorGUILayout.PropertyField(alpha);
             EditorGUILayout.PropertyField(ignoreParents);
-            if (serializedObject.ApplyModifiedProperties()) RefreshTargets();
+            if (serializedObject.ApplyModifiedProperties()) ApplyTargets();
 
             if (targets.Length == 1)
             {
@@ -42,6 +45,15 @@ namespace SpriteGroups.Editor
         {
             for (var index = 0; index < targets.Length; index++)
                 ((SpriteRendererGroup)targets[index]).Refresh();
+            SceneView.RepaintAll();
+        }
+
+        private void ApplyTargets()
+        {
+            for (var index = 0; index < targets.Length; index++)
+            {
+                if (targets[index] is SpriteRendererGroup group && group != null) group.ApplySettings();
+            }
             SceneView.RepaintAll();
         }
     }

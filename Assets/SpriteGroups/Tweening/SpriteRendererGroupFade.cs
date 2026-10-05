@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using DG.Tweening;
+using DG.Tweening.Core;
 using UnityEngine;
 
 namespace SpriteGroups.Tweening
@@ -14,6 +15,8 @@ namespace SpriteGroups.Tweening
     {
         private SpriteRendererGroup group;
         private Tween activeTween;
+        private DOGetter<float> alphaGetter;
+        private DOSetter<float> alphaSetter;
 
         public Tween FadeTo(float targetAlpha, float duration, Ease ease = Ease.Linear, bool unscaledTime = false)
         {
@@ -26,16 +29,26 @@ namespace SpriteGroups.Tweening
         {
             cancellationToken.ThrowIfCancellationRequested();
             var tween = StartFade(targetAlpha, duration, ease, unscaledTime, false);
+            var completion = new UniTaskCompletionSource();
+            var killed = false;
+            tween.OnComplete(() => completion.TrySetResult());
+            tween.OnKill(() =>
+            {
+                killed = true;
+                completion.TrySetCanceled();
+            });
+            var registration = cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
             try
             {
-                await UniTask.WaitUntil(() => !tween.IsActive() || tween.IsComplete(),
-                    cancellationToken: cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!tween.IsActive()) throw new OperationCanceledException();
+                await completion.Task;
             }
             finally
             {
-                tween.Kill();
+                registration.Dispose();
+                // Cancellation may originate on a worker thread; DOTween cleanup belongs on the main thread.
+                await UniTask.SwitchToMainThread();
+                tween.OnComplete(null).OnKill(null);
+                if (!killed) tween.Kill();
                 if (ReferenceEquals(activeTween, tween)) activeTween = null;
             }
         }
@@ -62,13 +75,17 @@ namespace SpriteGroups.Tweening
             if (!group.isActiveAndEnabled)
                 throw new InvalidOperationException("The sprite group must be enabled.");
             StopFade();
-            activeTween = DOTween.To(() => group.Alpha, value => group.Alpha = value,
-                    Mathf.Clamp01(targetAlpha), duration)
+            alphaGetter ??= ReadAlpha;
+            alphaSetter ??= WriteAlpha;
+            activeTween = DOTween.To(alphaGetter, alphaSetter, Mathf.Clamp01(targetAlpha), duration)
                 .SetEase(ease)
                 .SetUpdate(unscaledTime)
                 .SetAutoKill(autoKill)
                 .SetRecyclable(false);
             return activeTween;
         }
+
+        private float ReadAlpha() => group.Alpha;
+        private void WriteAlpha(float value) => group.Alpha = value;
     }
 }
