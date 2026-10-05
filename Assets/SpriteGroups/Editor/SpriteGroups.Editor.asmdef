@@ -1,0 +1,6 @@
+{
+  "name": "SpriteGroups.Editor",
+  "rootNamespace": "SpriteGroups.Editor",
+  "references": ["SpriteGroups.Runtime"],
+  "includePlatforms": ["Editor"]
+}

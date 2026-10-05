@@ -1,0 +1,6 @@
+{
+  "name": "SpriteGroups.Tests",
+  "references": ["SpriteGroups.Runtime"],
+  "includePlatforms": ["Editor"],
+  "optionalUnityReferences": ["TestAssemblies"]
+}
