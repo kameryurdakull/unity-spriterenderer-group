@@ -1,0 +1,9 @@
+{
+  "name": "SpriteGroups.Tweening",
+  "rootNamespace": "SpriteGroups.Tweening",
+  "references": ["SpriteGroups.Runtime", "UniTask"],
+  "defineConstraints": ["SPRITEGROUPS_UNITASK", "DOTWEEN"],
+  "versionDefines": [
+    { "name": "com.cysharp.unitask", "expression": "2.5.11", "define": "SPRITEGROUPS_UNITASK" }
+  ]
+}

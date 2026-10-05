@@ -1,7 +1,0 @@
-{
-  "name": "SpriteGroups.PlayModeTests",
-  "references": ["SpriteGroups.Runtime", "SpriteGroups.Tweening", "UniTask"],
-  "overrideReferences": true,
-  "precompiledReferences": ["nunit.framework.dll", "DOTween.dll"],
-  "optionalUnityReferences": ["TestAssemblies"]
-}

@@ -1,0 +1,22 @@
+{
+  "name": "com.kameryurdakull.sprite-renderer-group",
+  "version": "1.0.0",
+  "displayName": "Sprite Renderer Group",
+  "description": "Event-driven CanvasGroup-style alpha inheritance for SpriteRenderer hierarchies, with an Editor inspector and optional DOTween/UniTask fades.",
+  "unity": "6000.3",
+  "keywords": ["sprite", "alpha", "group", "2d", "fade"],
+  "author": {
+    "name": "kameryurdakull",
+    "url": "https://github.com/kameryurdakull"
+  },
+  "documentationUrl": "https://github.com/kameryurdakull/unity-spriterenderer-group#readme",
+  "changelogUrl": "https://github.com/kameryurdakull/unity-spriterenderer-group/blob/main/Packages/com.kameryurdakull.sprite-renderer-group/CHANGELOG.md",
+  "dependencies": {},
+  "samples": [
+    {
+      "displayName": "Basic Alpha Control",
+      "description": "A dependency-free component demonstrating Show, Hide and Half Alpha commands. Setup instructions are included.",
+      "path": "Samples~/BasicAlphaControl"
+    }
+  ]
+}

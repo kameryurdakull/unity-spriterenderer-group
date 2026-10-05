@@ -34,6 +34,12 @@
       },
       "hash": "4f58138386e2da00a2e306c55cd1475bb23f7048"
     },
+    "com.kameryurdakull.sprite-renderer-group": {
+      "version": "file:com.kameryurdakull.sprite-renderer-group",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {}
+    },
     "com.unity.ai.navigation": {
       "version": "2.0.12",
       "depth": 0,
